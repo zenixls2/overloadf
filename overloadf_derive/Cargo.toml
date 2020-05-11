@@ -3,6 +3,13 @@ name = "overloadf_derive"
 version = "0.1.0"
 authors = ["zenix <hansheng.huang@sbibits.com>"]
 edition = "2018"
+repository = "https://github.com/zenixls2/overloadf"
+homepage = "https://github.com/zenixls2/overloadf"
+documentation = "https://docs.rs/overloadf/"
+keywords = ["function", "overload", "overloadable", "no_std"]
+description = "unlock function overloading for rust"
+readme = "README.md"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]

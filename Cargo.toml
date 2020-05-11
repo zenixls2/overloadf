@@ -7,6 +7,7 @@ readme = "README.md"
 repository = "https://github.com/zenixls2/overloadf"
 homepage = "https://github.com/zenixls2/overloadf"
 documentation = "https://docs.rs/overloadf/"
+description = "unlock function overloading for rust"
 keywords = ["function", "overload", "overloadable", "no_std"]
 license = "MIT"
 
