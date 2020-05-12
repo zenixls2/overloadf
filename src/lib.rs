@@ -20,7 +20,7 @@
 //! - const function overloading
 //! - different privacy setting on function overloading (will pickup the privacy setting in first
 //! function and apply to all)
-//! - function overloading inside traits
+//! - function overloading inside traits (for limited cases)
 //!
 //! ## Examples:
 //! simple one:
@@ -105,6 +105,79 @@
 //! pub fn xdd<T: Copy + Debug + Mul<i32>>(number: T) -> T {
 //!     number * 3_i32
 //! }
+//! ```
+//!
+//! for trait methods:
+//! ```rust
+//! #![feature(fn_traits, unboxed_closures)]
+//! use overloadf::*;
+//! #[overload]
+//! trait Xdd: Sized {
+//!     fn new(input: i32) -> Self;
+//!     fn new(input :u32) -> Self;
+//! }
+//! struct Haha {
+//!     a: u32,
+//!     b: i32,
+//! }
+//! #[overload]
+//! impl Xdd for Haha {
+//!     fn new(b: i32) -> Self {
+//!         Self {
+//!             a: 1,
+//!             b,
+//!         }
+//!     }
+//!     fn new(a: u32) -> Self {
+//!         Self {
+//!             a,
+//!             b: 2,
+//!         }
+//!     }
+//! }
+//! let haha = Haha::new(12_i32);
+//! assert_eq!(haha.a, 1_u32);
+//! assert_eq!(haha.b, 12_i32);
+//! let haha = Haha::new(9_u32);
+//! assert_eq!(haha.a, 9_u32);
+//! assert_eq!(haha.b, 2_i32);
+//! ```
+//!
+//! non-trait impl:
+//! ```rust
+//! #![feature(fn_traits, unboxed_closures)]
+//! use overloadf::*;
+//! #[derive(Debug)]
+//! pub struct Haha {
+//!     a: u32,
+//!     b: i32,
+//! }
+//! #[overload]
+//! impl Haha {
+//!     pub fn new(b: i32) -> Self {
+//!         Self {
+//!             a: 1,
+//!             b,
+//!         }
+//!     }
+//!     pub fn new(a: u32) -> Self {
+//!         Self {
+//!             a,
+//!             b: 2,
+//!         }
+//!     }
+//!     // will do nothing to functions without overloading
+//!     pub fn normal(&self) -> String {
+//!         format!("{:?}", self)
+//!     }
+//! }
+//! let haha = Haha::new(12_i32);
+//! assert_eq!(haha.a, 1_u32);
+//! assert_eq!(haha.b, 12_i32);
+//! let haha = Haha::new(9_u32);
+//! assert_eq!(haha.a, 9_u32);
+//! assert_eq!(haha.b, 2_i32);
+//! assert_eq!(haha.normal(), "Haha { a: 9, b: 2 }");
 //! ```
 
 pub extern crate overloadf_derive;

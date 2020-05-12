@@ -15,7 +15,6 @@ license = "MIT"
 
 [dependencies]
 overloadf_derive = { path = "overloadf_derive", version = "0.1.0" }
-libc = { version = "0.2.69", default-features = false }
 
 [badges]
 travis-ci = { repository = "zenixls2/overloadf" }
