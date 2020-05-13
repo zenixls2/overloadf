@@ -99,7 +99,7 @@ fn impl_method_to_non_trait(
     ast: &syn::ImplItemMethod,
 ) -> syn::export::TokenStream2 {
     let span = ast.span().unstable();
-    let generics = &ast.sig.generics;
+    let (impl_generics, _ty_generics, where_clause) = &ast.sig.generics.split_for_impl();
     let attrs = &ast.attrs;
     let unsafety = &ast.sig.unsafety;
     let asyncness = &ast.sig.asyncness;
@@ -168,7 +168,7 @@ fn impl_method_to_non_trait(
         }
     }
     let result = quote!(
-        impl#generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type #where_clause {
             type Output = #output;
             #(#attrs)*
             #[inline]
@@ -176,14 +176,14 @@ fn impl_method_to_non_trait(
                 #block
             }
         }
-        impl#generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
                 #block
             }
         }
-        impl#generics std::ops::Fn<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
@@ -200,7 +200,7 @@ fn impl_method_to_fn_trait(
     ast: &syn::ImplItemMethod,
 ) -> syn::export::TokenStream2 {
     let span = ast.span().unstable();
-    let generics = &ast.sig.generics;
+    let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
     let attrs = &ast.attrs;
     let unsafety = &ast.sig.unsafety;
     let asyncness = &ast.sig.asyncness;
@@ -268,7 +268,7 @@ fn impl_method_to_fn_trait(
         }
     }
     let result = quote!(
-        impl#generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type<#tp> {
+        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
             type Output = #output;
             #(#attrs)*
             #[inline]
@@ -276,14 +276,14 @@ fn impl_method_to_fn_trait(
                 #block
             }
         }
-        impl#generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type<#tp> {
+        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
                 #block
             }
         }
-        impl#generics std::ops::Fn<(#(#input_types),*,)> for #shared_type<#tp> {
+        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
@@ -301,7 +301,8 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
     let mut items = vec![];
     if let Some((_, path, _)) = item.trait_.clone() {
         // impl Trait for Struct {}
-        if let Some(ident) = path.get_ident() {
+        if let Some(pathseg) = path.segments.first() {
+            let ident = &pathseg.ident;
             if let Some(shared_fields) = TRAIT_IDENTS.lock().unwrap().get(&ident.to_string()) {
                 // TODO: default implementation
                 for i in &item.items {
@@ -379,7 +380,7 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
 
 fn process_fn(ast: syn::ItemFn) -> TokenStream {
     let span = ast.span().unstable();
-    let generics = ast.sig.generics;
+    let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
     let attrs = ast.attrs;
     let vis = ast.vis;
     let constness = ast.sig.constness;
@@ -472,7 +473,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
     }
     result = quote!(
         #prepare
-        impl#generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type #where_clause {
             type Output = #output;
             #(#attrs)*
             #[inline]
@@ -480,14 +481,14 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
                 #block
             }
         }
-        impl#generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
                 #block
             }
         }
-        impl#generics std::ops::Fn<(#(#input_types),*,)> for #shared_type {
+        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type #where_clause {
             #(#attrs)*
             #[inline]
             extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {

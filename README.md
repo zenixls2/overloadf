@@ -2,7 +2,7 @@
 [![License](https://img.shields.io/crates/l/overloadf)](LICENSE-MIT)
 [![Build Status](https://travis-ci.org/zenixls2/overloadf.svg?branch=master)](https://travis-ci.org/zenixls2/overloadf)
 
-# overloadf version - 0.1.1
+# overloadf version - 0.1.2
 
 ## Overloadf
 
@@ -56,7 +56,10 @@ use overloadf::*;
 use std::ops::MulAssign;
 use std::fmt::Debug;
 #[overload]
-pub fn xdd<T: Copy + Debug + MulAssign<i32>>(mut number: T) -> T {
+pub fn xdd<T: Copy + Debug + MulAssign<i32>>(mut number: T) -> T
+where
+    T: PartialEq,
+{
     println!("number {:?}", number);
     number *= 3_i32;
     number
@@ -111,7 +114,7 @@ pub fn xdd<T: Copy + Debug + Mul<i32>>(number: T) -> T {
 }
 ```
 
-for trait methods:
+for trait methods (notice that trait for overload must inherit Sized):
 ```rust
 #![feature(fn_traits, unboxed_closures)]
 use overloadf::*;
@@ -133,6 +136,43 @@ impl Xdd for Haha {
         }
     }
     fn new(a: u32) -> Self {
+        Self {
+            a,
+            b: 2,
+        }
+    }
+}
+let haha = Haha::new(12_i32);
+assert_eq!(haha.a, 1_u32);
+assert_eq!(haha.b, 12_i32);
+let haha = Haha::new(9_u32);
+assert_eq!(haha.a, 9_u32);
+assert_eq!(haha.b, 2_i32);
+```
+
+trait with generics:
+```rust
+#![feature(fn_traits, unboxed_closures)]
+use overloadf::*;
+#[overload]
+trait Xdd<T: Sized>: Sized {
+    fn new(input: i32) -> T where T: Debug;
+    fn new(input: u32) -> T where T: Debug;
+}
+#[derive(Debug)]
+struct Haha {
+    a: u32,
+    b: i32,
+}
+#[overload]
+impl Xdd<Haha> for Haha {
+    fn new(b: i32) -> Haha {
+        Self {
+            a: 1,
+            b,
+        }
+    }
+    fn new(a: u32) -> Haha {
         Self {
             a,
             b: 2,

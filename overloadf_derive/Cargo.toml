@@ -1,6 +1,6 @@
 [package]
 name = "overloadf_derive"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["zenix <hansheng.huang@sbibits.com>"]
 edition = "2018"
 repository = "https://github.com/zenixls2/overloadf"
