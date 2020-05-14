@@ -16,6 +16,6 @@ license = "MIT"
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.20", features = ["full", "extra-traits"] }
-quote = "1.0.4"
+syn = { version = "1.0.21", features = ["full", "extra-traits"] }
+quote = "1.0.5"
 lazy_static = "1.4.0"

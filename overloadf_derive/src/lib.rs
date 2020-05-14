@@ -90,7 +90,8 @@ fn replace_self<F: ToTokens, T: ToTokens, O: syn::parse::Parse>(
     let input_str = input
         .to_token_stream()
         .to_string()
-        .replace("Self", &to.to_token_stream().to_string());
+        .replace("Self", &to.to_token_stream().to_string())
+        .replace("self", "__self");
     syn::parse_str(&input_str)
 }
 
@@ -115,13 +116,28 @@ fn impl_method_to_non_trait(
     let mut input_types = vec![];
     let mut input_params = vec![];
     let mut param_assign = vec![];
-    for (i, tp) in inputs.iter().enumerate() {
-        if let syn::FnArg::Typed(tp) = tp {
-            let pat: syn::Pat = Box::leak(tp.pat.clone()).clone();
-            let ty: syn::Type = Box::leak(tp.ty.clone()).clone();
-            input_params.push(format_ident!("_{}", i));
-            input_types.push(ty);
-            param_assign.push(pat);
+    for (i, itp) in inputs.iter().enumerate() {
+        match itp {
+            syn::FnArg::Typed(itp) => {
+                let pat: syn::Pat = Box::leak(itp.pat.clone()).clone();
+                let ty: syn::Type = Box::leak(itp.ty.clone()).clone();
+                input_params.push(format_ident!("_{}", i));
+                input_types.push(ty);
+                param_assign.push(pat);
+            }
+            syn::FnArg::Receiver(r) => {
+                input_params.push(format_ident!("_{}", i));
+                let ty = match (r.reference.as_ref(), r.mutability.as_ref()) {
+                    (Some(_), Some(_)) => quote!(&mut #tp),
+                    (Some(_), None) => quote!(&#tp),
+                    (None, Some(_)) => quote!(mut #tp),
+                    (None, None) => quote!(#tp),
+                };
+                let ty: syn::Type = syn::parse_str(&ty.to_string()).unwrap();
+                input_types.push(ty);
+                let pat: syn::Pat = syn::parse_str("__self").unwrap();
+                param_assign.push(pat);
+            }
         }
     }
     let new_block: syn::Block = replace_self(&ast.block, tp).unwrap();
@@ -195,6 +211,7 @@ fn impl_method_to_non_trait(
 }
 
 fn impl_method_to_fn_trait(
+    trait_path: &syn::Path,
     tt: &syn::Ident,
     tp: &syn::Type,
     ast: &syn::ImplItemMethod,
@@ -215,13 +232,37 @@ fn impl_method_to_fn_trait(
     let mut input_types = vec![];
     let mut input_params = vec![];
     let mut param_assign = vec![];
-    for (i, tp) in inputs.iter().enumerate() {
-        if let syn::FnArg::Typed(tp) = tp {
-            let pat: syn::Pat = Box::leak(tp.pat.clone()).clone();
-            let ty: syn::Type = Box::leak(tp.ty.clone()).clone();
-            input_params.push(format_ident!("_{}", i));
-            input_types.push(ty);
-            param_assign.push(pat);
+    for (i, itp) in inputs.iter().enumerate() {
+        match itp {
+            syn::FnArg::Typed(itp) => {
+                let pat: syn::Pat = Box::leak(itp.pat.clone()).clone();
+                let ty: syn::Type = Box::leak(itp.ty.clone()).clone();
+                let ty = if let syn::Type::Path(path) = ty.clone() {
+                    if path.path.segments.len() == 1 {
+                        replace_self(ty, trait_path).unwrap()
+                    } else {
+                        replace_self(ty, quote!(<#tp as #trait_path>)).unwrap()
+                    }
+                } else {
+                    ty
+                };
+                input_params.push(format_ident!("_{}", i));
+                input_types.push(ty);
+                param_assign.push(pat);
+            }
+            syn::FnArg::Receiver(r) => {
+                input_params.push(format_ident!("_{}", i));
+                let ty = match (r.reference.as_ref(), r.mutability.as_ref()) {
+                    (Some(_), Some(_)) => quote!(&mut #tp),
+                    (Some(_), None) => quote!(&#tp),
+                    (None, Some(_)) => quote!(mut #tp),
+                    (None, None) => quote!(#tp),
+                };
+                let ty: syn::Type = syn::parse_str(&ty.to_string()).unwrap();
+                input_types.push(ty);
+                let pat: syn::Pat = syn::parse_str("__self").unwrap();
+                param_assign.push(pat);
+            }
         }
     }
     let new_block: syn::Block = replace_self(&ast.block, tp).unwrap();
@@ -309,7 +350,12 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
                     if let syn::ImplItem::Method(item_method) = i {
                         let method_id = item_method.sig.ident.to_string();
                         if shared_fields.iter().any(|e| e == &method_id) {
-                            generated.push(impl_method_to_fn_trait(ident, &self_type, item_method));
+                            generated.push(impl_method_to_fn_trait(
+                                &path,
+                                ident,
+                                &self_type,
+                                item_method,
+                            ));
                         } else {
                             items.push(syn::ImplItem::Method(item_method.clone()));
                         }

@@ -152,8 +152,9 @@
 //! use overloadf::*;
 //! #[overload]
 //! trait Xdd<T: Sized>: Sized {
+//!     type J: Into<i32>;
 //!     fn new(input: i32) -> T where T: Debug;
-//!     fn new(input: u32) -> T where T: Debug;
+//!     fn new<I: Into<u32>>(input1: I, input2: J) -> T where T: Debug;
 //! }
 //! #[derive(Debug)]
 //! struct Haha {
@@ -162,23 +163,24 @@
 //! }
 //! #[overload]
 //! impl Xdd<Haha> for Haha {
+//!     type J = i32;
 //!     fn new(b: i32) -> Haha {
 //!         Self {
 //!             a: 1,
 //!             b,
 //!         }
 //!     }
-//!     fn new(a: u32) -> Haha {
+//!     fn new<I: Into<u32>>(a: I, b: Self::J) -> Haha {
 //!         Self {
-//!             a,
-//!             b: 2,
+//!             a: a.into(),
+//!             b,
 //!         }
 //!     }
 //! }
 //! let haha = Haha::new(12_i32);
 //! assert_eq!(haha.a, 1_u32);
 //! assert_eq!(haha.b, 12_i32);
-//! let haha = Haha::new(9_u32);
+//! let haha = Haha::new(9_u32, 2_i32);
 //! assert_eq!(haha.a, 9_u32);
 //! assert_eq!(haha.b, 2_i32);
 //! ```
@@ -206,8 +208,16 @@
 //!             b: 2,
 //!         }
 //!     }
-//!     // will do nothing to functions without overloading
+//!     // self in function parameter will be converted to associated type
+//!     // that means no more syntax sugar like haha.normal()
 //!     pub fn normal(&self) -> String {
+//!         format!("{:?}", self)
+//!     }
+//!     pub fn normal(&self, prefix: &str) -> String {
+//!         format!("{} {:?}", prefix, self)
+//!     }
+//!     // function without overloading is not influenced
+//!     pub fn display(&self) -> String {
 //!         format!("{:?}", self)
 //!     }
 //! }
@@ -217,7 +227,9 @@
 //! let haha = Haha::new(9_u32);
 //! assert_eq!(haha.a, 9_u32);
 //! assert_eq!(haha.b, 2_i32);
-//! assert_eq!(haha.normal(), "Haha { a: 9, b: 2 }");
+//! assert_eq!(Haha::normal(&haha), "Haha { a: 9, b: 2 }");
+//! assert_eq!(Haha::normal(&haha, "abc"), "abc Haha { a: 9, b: 2 }");
+//! assert_eq!(haha.display(), "Haha { a: 9, b: 2 }");
 //! ```
 
 pub extern crate overloadf_derive;
