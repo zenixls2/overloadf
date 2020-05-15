@@ -154,7 +154,11 @@
 //! trait Xdd<T: Sized>: Sized {
 //!     type J: Into<i32>;
 //!     fn new(input: i32) -> T where T: Debug;
-//!     fn new<I: Into<u32>>(input1: I, input2: J) -> T where T: Debug;
+//!     // trait function with default implementation
+//!     fn new(input: u32) -> String {
+//!         "please use new(input1, input2) instead".to_string()
+//!     }
+//!     fn new<I: Into<u32>>(input1: I, input2: Self::J) -> T where T: Debug;
 //! }
 //! #[derive(Debug)]
 //! struct Haha {
@@ -183,6 +187,7 @@
 //! let haha = Haha::new(9_u32, 2_i32);
 //! assert_eq!(haha.a, 9_u32);
 //! assert_eq!(haha.b, 2_i32);
+//! assert_eq!(Haha::new(3_u32), "please use new(input1, input2) instead".to_string());
 //! ```
 //!
 //! non-trait impl:
