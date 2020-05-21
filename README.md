@@ -2,7 +2,7 @@
 [![License](https://img.shields.io/crates/l/overloadf)](LICENSE-MIT)
 [![Build Status](https://travis-ci.org/zenixls2/overloadf.svg?branch=master)](https://travis-ci.org/zenixls2/overloadf)
 
-# overloadf version - 0.1.4
+# overloadf version - 0.1.5
 
 ## Overloadf
 
@@ -35,6 +35,11 @@ use overloadf::*;
 #[overload]
 pub fn xdd(number: i32) -> i32 {
     number * 3
+}
+
+#[overload]
+pub fn xdd(number: u8) {
+    println!("{}", number);
 }
 
 #[overload]

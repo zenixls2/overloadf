@@ -98,7 +98,7 @@ fn replace_self<F: ToTokens, T: ToTokens, O: syn::parse::Parse>(
 fn get_output(ast: &syn::ReturnType, tp: &syn::Type) -> syn::export::TokenStream2 {
     let new_output: syn::ReturnType = replace_self(&ast, tp).unwrap();
     match new_output {
-        x @ syn::ReturnType::Default => quote!(#x),
+        syn::ReturnType::Default => quote!(()),
         syn::ReturnType::Type(_, t) => quote!(#t),
     }
 }
@@ -728,7 +728,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
     let ident = ast.sig.ident.clone();
     let inputs = ast.sig.inputs;
     let mut output = match ast.sig.output {
-        x @ syn::ReturnType::Default => quote!(#x),
+        syn::ReturnType::Default => quote!(()),
         syn::ReturnType::Type(_, t) => quote!(#t),
     };
     let shared_type = format_ident!("Overloader_{}", ident);

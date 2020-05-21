@@ -34,6 +34,11 @@
 //! }
 //!
 //! #[overload]
+//! pub fn xdd(number: u8) {
+//!     println!("{}", number);
+//! }
+//!
+//! #[overload]
 //! pub unsafe fn xdd(number: &u64) -> u64 {
 //!     let n = number as *const u64;
 //!     *n * 4
