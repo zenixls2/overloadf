@@ -1,5 +1,6 @@
-#![feature(proc_macro_diagnostic)]
+#![feature(proc_macro_diagnostic, proc_macro_span)]
 extern crate proc_macro;
+#[macro_use]
 extern crate syn;
 #[macro_use]
 extern crate quote;
@@ -10,6 +11,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use syn::spanned::Spanned;
+mod fn_struct;
+mod input_iter;
 
 lazy_static! {
     static ref NAMINGS: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -17,6 +20,76 @@ lazy_static! {
     static ref DEFAULT_DEFINITION: Mutex<HashMap<
         String, HashMap<String, String> // TraitItemMethod
         >> = Mutex::new(HashMap::new());
+}
+
+macro_rules! quotation_expand {
+    ($x: tt) => {
+        if $x.is_empty() {
+            quote!(())
+        } else {
+            quote!((#(#$x),*,))
+        };
+    }
+}
+
+macro_rules! fn_impl {
+    (
+        $impl_generics: tt,
+        $input_types: tt,
+        $shared_type: tt,
+        $where_clause: tt,
+        $output: tt,
+        $attrs: tt,
+        $block: tt
+    ) => {
+        quote!(
+            impl #$impl_generics std::ops::FnOnce<#$input_types> for #$shared_type #$where_clause {
+                type Output = #$output;
+                #(#$attrs)*
+                #[inline]
+                extern "rust-call" fn call_once(self, args: #$input_types) -> Self::Output {
+                    #$block
+                }
+            }
+            impl #$impl_generics std::ops::FnMut<#$input_types> for #$shared_type #$where_clause {
+                #(#$attrs)*
+                #[inline]
+                extern "rust-call" fn call_mut(&mut self, args: #$input_types) -> Self::Output {
+                    #$block
+                }
+            }
+            impl #$impl_generics std::ops::Fn<#$input_types> for #$shared_type #$where_clause {
+                #(#$attrs)*
+                #[inline]
+                extern "rust-call" fn call(&self, args: #$input_types) -> Self::Output {
+                    #$block
+                }
+            }
+        )
+    };
+    (
+        $impl_generics: tt,
+        $input_types: tt,
+        $shared_type: tt,
+        $where_clause: tt,
+        $output: tt,
+        $attrs: tt,
+        $block: tt,
+        $tp: tt
+    ) => {
+        {
+            let shared_type = quote!(#$shared_type<#$tp>);
+            fn_impl!(
+                $impl_generics,
+                $input_types,
+                shared_type,
+                $where_clause,
+                $output,
+                $attrs,
+                $block
+            )
+        }
+    }
 }
 
 fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
@@ -290,6 +363,8 @@ fn impl_method_to_non_trait(
     }
     let new_block: syn::Block = replace_self(&ast.block, tp).unwrap();
     let body = &new_block.stmts;
+    let param_assign = quotation_expand!(param_assign);
+    let input_types = quotation_expand!(input_types);
     let block;
     if unsafety.is_some() {
         span.warning(
@@ -300,7 +375,7 @@ fn impl_method_to_non_trait(
         if asyncness.is_some() {
             output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 unsafe {
                     Box::pin(async move {
                         #(#body)*
@@ -309,7 +384,7 @@ fn impl_method_to_non_trait(
             );
         } else {
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 unsafe {
                     #(#body)*
                 }
@@ -319,41 +394,26 @@ fn impl_method_to_non_trait(
         if asyncness.is_some() {
             output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 Box::pin(async move {
                     #(#body)*
                 })
             );
         } else {
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 #(#body)*
             );
         }
     }
-    let result = quote!(
-        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type #where_clause {
-            type Output = #output;
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_once(self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
+    let result = fn_impl!(
+        impl_generics,
+        input_types,
+        shared_type,
+        where_clause,
+        output,
+        attrs,
+        block
     );
     result
 }
@@ -408,6 +468,8 @@ fn trait_method_to_fn_trait(
         }
         let new_block: syn::Block = replace_self(block, tp).unwrap();
         let body = &new_block.stmts;
+        let param_assign = quotation_expand!(param_assign);
+        let input_types = quotation_expand!(input_types);
         let block;
         if unsafety.is_some() {
             span.warning(
@@ -418,7 +480,7 @@ fn trait_method_to_fn_trait(
             if asyncness.is_some() {
                 output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
                 block = quote!(
-                    let (#(#param_assign),*,) = args;
+                    let #param_assign = args;
                     unsafe {
                         Box::pin(async move {
                             #(#body)*
@@ -427,7 +489,7 @@ fn trait_method_to_fn_trait(
                 );
             } else {
                 block = quote!(
-                    let (#(#param_assign),*,) = args;
+                    let #param_assign = args;
                     unsafe {
                         #(#body)*
                     }
@@ -437,41 +499,27 @@ fn trait_method_to_fn_trait(
             if asyncness.is_some() {
                 output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
                 block = quote!(
-                    let (#(#param_assign),*,) = args;
+                    let #param_assign = args;
                     Box::pin(async move {
                         #(#body)*
                     })
                 );
             } else {
                 block = quote!(
-                    let (#(#param_assign),*,) = args;
+                    let #param_assign = args;
                     #(#body)*
                 );
             }
         }
-        let result = quote!(
-            impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-                type Output = #output;
-                #(#attrs)*
-                #[inline]
-                extern "rust-call" fn call_once(self, args: (#(#input_types),*,)) -> Self::Output {
-                    #block
-                }
-            }
-            impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-                #(#attrs)*
-                #[inline]
-                extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
-                    #block
-                }
-            }
-            impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-                #(#attrs)*
-                #[inline]
-                extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
-                    #block
-                }
-            }
+        let result = fn_impl!(
+            impl_generics,
+            input_types,
+            shared_type,
+            where_clause,
+            output,
+            attrs,
+            block,
+            tp
         );
         return result;
     } else {
@@ -537,6 +585,8 @@ fn impl_method_to_fn_trait(
     }
     let new_block: syn::Block = replace_self(&ast.block, tp).unwrap();
     let body = &new_block.stmts;
+    let param_assign = quotation_expand!(param_assign);
+    let input_types = quotation_expand!(input_types);
     let block;
     if unsafety.is_some() {
         span.warning(
@@ -547,7 +597,7 @@ fn impl_method_to_fn_trait(
         if asyncness.is_some() {
             output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 unsafe {
                     Box::pin(async move {
                         #(#body)*
@@ -556,7 +606,7 @@ fn impl_method_to_fn_trait(
             );
         } else {
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 unsafe {
                     #(#body)*
                 }
@@ -566,43 +616,28 @@ fn impl_method_to_fn_trait(
         if asyncness.is_some() {
             output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 Box::pin(async move {
                     #(#body)*
                 })
             );
         } else {
             block = quote!(
-                let (#(#param_assign),*,) = args;
+                let #param_assign = args;
                 #(#body)*
             );
         }
     }
-    let result = quote!(
-        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-            type Output = #output;
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_once(self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type<#tp> #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-    );
-    result
+    fn_impl!(
+        impl_generics,
+        input_types,
+        shared_type,
+        where_clause,
+        output,
+        attrs,
+        block,
+        tp
+    )
 }
 
 fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
@@ -717,6 +752,14 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
     result.into()
 }
 
+fn param_variants(
+    input_types: Vec<syn::Type>,
+    param_assign: Vec<syn::Pat>,
+    default_values: Vec<Option<fn_struct::Assign>>,
+) -> input_iter::InputIter {
+    input_iter::InputIter::new(input_types, param_assign, default_values)
+}
+
 fn process_fn(ast: syn::ItemFn) -> TokenStream {
     let span = ast.span().unstable();
     let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
@@ -732,16 +775,23 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
         syn::ReturnType::Type(_, t) => quote!(#t),
     };
     let shared_type = format_ident!("Overloader_{}", ident);
+    let mut default_values = vec![];
     let mut input_types = vec![];
-    let mut input_params = vec![];
     let mut param_assign = vec![];
-    for (i, tp) in inputs.iter().enumerate() {
+    for tp in inputs.iter() {
         if let syn::FnArg::Typed(tp) = tp {
+            let mut assign: Option<fn_struct::Assign> = None;
+            for attr in &tp.attrs {
+                if attr.path.is_ident("default") {
+                    assign = Some(attr.parse_args().unwrap());
+                    break;
+                }
+            }
             let pat: syn::Pat = Box::leak(tp.pat.clone()).clone();
             let ty: syn::Type = Box::leak(tp.ty.clone()).clone();
-            input_params.push(format_ident!("_{}", i));
             input_types.push(ty);
             param_assign.push(pat);
+            default_values.push(assign);
         }
     }
     let body = ast.block.stmts;
@@ -761,8 +811,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
     } else {
         quote!()
     };
-    let result;
-    let block;
+    let mut results = vec![];
     if constness.is_some() {
         span.warning(
             "const fn is not supported. ".to_owned()
@@ -770,72 +819,71 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
         )
         .emit();
     }
-    if unsafety.is_some() {
-        span.warning(
-            "unsafe fn is not supported. ".to_owned()
-                + "Will wrap in a unsafe block to make function safe.",
-        )
-        .emit();
-        if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
-            block = quote!(
-                let (#(#param_assign),*,) = args;
-                unsafe {
+    let param_iter = param_variants(input_types, param_assign, default_values);
+    for (input_types, param_assign, defaults) in param_iter {
+        let input_types = quotation_expand!(input_types);
+        let param_assign = quotation_expand!(param_assign);
+        let block;
+        if unsafety.is_some() {
+            span.warning(
+                "unsafe fn is not supported. ".to_owned()
+                    + "Will wrap in a unsafe block to make function safe.",
+            )
+            .emit();
+            if asyncness.is_some() {
+                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                block = quote!(
+                    let #param_assign = args;
+                    #(#defaults)*
+                    unsafe {
+                        Box::pin(async move {
+                            #(#body)*
+                        })
+                    }
+                );
+            } else {
+                block = quote!(
+                    let #param_assign = args;
+                    #(#defaults)*
+                    unsafe {
+                        #(#body)*
+                    }
+                );
+            }
+        } else {
+            if asyncness.is_some() {
+                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                block = quote!(
+                    let #param_assign = args;
+                    #(#defaults)*
                     Box::pin(async move {
                         #(#body)*
                     })
-                }
-            );
-        } else {
-            block = quote!(
-                let (#(#param_assign),*,) = args;
-                unsafe {
+                );
+            } else {
+                block = quote!(
+                    let #param_assign = args;
+                    #(#defaults)*
                     #(#body)*
-                }
-            );
+                );
+            }
         }
-    } else {
-        if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
-            block = quote!(
-                let (#(#param_assign),*,) = args;
-                Box::pin(async move {
-                    #(#body)*
-                })
-            );
-        } else {
-            block = quote!(
-                let (#(#param_assign),*,) = args;
-                #(#body)*
-            );
-        }
+        let result = fn_impl!(
+            impl_generics,
+            input_types,
+            shared_type,
+            where_clause,
+            output,
+            attrs,
+            block
+        );
+        results.push(result);
     }
-    result = quote!(
+    quote!(
         #prepare
-        impl #impl_generics std::ops::FnOnce<(#(#input_types),*,)> for #shared_type #where_clause {
-            type Output = #output;
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_once(self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::FnMut<(#(#input_types),*,)> for #shared_type #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call_mut(&mut self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-        impl #impl_generics std::ops::Fn<(#(#input_types),*,)> for #shared_type #where_clause {
-            #(#attrs)*
-            #[inline]
-            extern "rust-call" fn call(&self, args: (#(#input_types),*,)) -> Self::Output {
-                #block
-            }
-        }
-    );
-    result.into()
+        #(#results)*
+    )
+    .into()
 }
 
 #[proc_macro_attribute]

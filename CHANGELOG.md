@@ -1,3 +1,9 @@
+0.1.6
+=====
+
+fix functions with empty input
+add default parameters support for normal functions
+
 0.1.5
 =====
 

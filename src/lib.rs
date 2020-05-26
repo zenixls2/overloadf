@@ -28,6 +28,12 @@
 //! #![feature(fn_traits, unboxed_closures)]
 //!
 //! use overloadf::*;
+//!
+//! #[overload]
+//! pub fn xdd() -> i32 {
+//!     5_i32
+//! }
+//!
 //! #[overload]
 //! pub fn xdd(number: i32) -> i32 {
 //!     number * 3
@@ -47,6 +53,7 @@
 //! assert_eq!(xdd(3_i32), 9_i32);
 //! let c: &u64 = &6_u64;
 //! assert_eq!(xdd(c), 24_u64); // unsafe function is not supported.
+//! assert_eq!(xdd(), 5_i32);
 //! ```
 //!
 //! with generic and custom type:
@@ -240,6 +247,36 @@
 //! assert_eq!(Haha::normal(&haha), "Haha { a: 9, b: 2 }");
 //! assert_eq!(Haha::normal(&haha, "abc"), "abc Haha { a: 9, b: 2 }");
 //! assert_eq!(haha.display(), "Haha { a: 9, b: 2 }");
+//! ```
+//!
+//! default attribute:
+//!
+//! in functions(not yet for traits), now you could decorate parameters with default values.
+//! the reason why we don't support `parameter = value` syntax directly is that in derived
+//! `TokenStream`, values inside will go through compiler first for syntax check.
+//! The default value syntax will be treated as a compile error and forbid us from parsing
+//! and generating valid Tokens.
+//!
+//! example:
+//! ```rust
+//! #![feature(fn_traits, unboxed_closures)]
+//! use overloadf::*;
+//! #[overload]
+//! fn xdd(#[default(= 5_i32)] a: i32, #[default(= 32_u64)] b: u64) -> u64 { b - (a as u64) }
+//! assert_eq!(xdd(3_i32), 29_u64);
+//! assert_eq!(xdd(4_i32, 4_u64), 0);
+//! assert_eq!(xdd(), 27_u64);
+//! // compile error: expect i32 found u64
+//! // assert_eq!(xdd(6_u64), 1_u64);
+//! ```
+//!
+//! ```rust
+//! #![feature(fn_traits, unboxed_closures)]
+//! use overloadf::*;
+//! #[overload]
+//! fn xdd(#[default(= 5_i32)] a: i32, b: u8, #[default(= 32_u64)] c: u64) -> u64 { c + (b as u64) - (a as u64) }
+//! assert_eq!(xdd(4_i32, 7_u8), 35_u64);
+//! assert_eq!(xdd(3_u8), 30_u64);
 //! ```
 
 pub extern crate overloadf_derive;
