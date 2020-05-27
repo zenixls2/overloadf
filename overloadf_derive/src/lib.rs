@@ -118,6 +118,7 @@ fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
                 shared_fields.push(const_field.to_string());
                 let shared_type = format_ident!("Overloader_{}_{}", ident, s);
                 let const_stream: TokenStream = quote!(
+                    #[allow(non_upper_case_globals)]
                     const #const_field: #shared_type<Self> = #shared_type::<Self>(std::marker::PhantomData);
                 ).into();
                 let t = syn::parse_macro_input!(const_stream as syn::TraitItemConst);
