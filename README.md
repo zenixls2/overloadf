@@ -2,7 +2,7 @@
 [![License](https://img.shields.io/crates/l/overloadf)](LICENSE-MIT)
 [![Build Status](https://travis-ci.org/zenixls2/overloadf.svg?branch=master)](https://travis-ci.org/zenixls2/overloadf)
 
-# overloadf version - 0.1.6
+# overloadf version - 0.1.7
 
 ## Overloadf
 
@@ -160,6 +160,29 @@ assert_eq!(haha.b, 12_i32);
 let haha = Haha::new(9_u32);
 assert_eq!(haha.a, 9_u32);
 assert_eq!(haha.b, 2_i32);
+```
+
+dynamic trait object implementation:
+```rust
+#![feature(fn_traits, unboxed_closures)]
+use overloadf::*;
+trait Xdd: 'static {}
+
+#[overload]
+impl dyn Xdd {
+    fn abc(&self, c: i32) -> i32 {
+        c
+    }
+    fn abc(&self, c: u32) -> u32 {
+        c
+    }
+}
+
+impl<T: 'static + ?Sized> Xdd for T {}
+let obj = (&3_i32 as &(dyn Xdd));
+// here we lost the syntax sugar of calling obj.abc(c) directly
+assert_eq!(Xdd::abc(obj, 3_i32), 3_i32);
+assert_eq!(Xdd::abc(obj, 3_u32), 3_u32);
 ```
 
 trait with generics:

@@ -4,10 +4,10 @@ extern crate proc_macro;
 extern crate syn;
 #[macro_use]
 extern crate quote;
+use core::cmp::Ordering;
 use lazy_static::lazy_static;
 use proc_macro::TokenStream;
 use quote::ToTokens;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use syn::spanned::Spanned;
@@ -43,7 +43,7 @@ macro_rules! fn_impl {
         $block: tt
     ) => {
         quote!(
-            impl #$impl_generics std::ops::FnOnce<#$input_types> for #$shared_type #$where_clause {
+            impl #$impl_generics core::ops::FnOnce<#$input_types> for #$shared_type #$where_clause {
                 type Output = #$output;
                 #(#$attrs)*
                 #[inline]
@@ -51,14 +51,14 @@ macro_rules! fn_impl {
                     #$block
                 }
             }
-            impl #$impl_generics std::ops::FnMut<#$input_types> for #$shared_type #$where_clause {
+            impl #$impl_generics core::ops::FnMut<#$input_types> for #$shared_type #$where_clause {
                 #(#$attrs)*
                 #[inline]
                 extern "rust-call" fn call_mut(&mut self, args: #$input_types) -> Self::Output {
                     #$block
                 }
             }
-            impl #$impl_generics std::ops::Fn<#$input_types> for #$shared_type #$where_clause {
+            impl #$impl_generics core::ops::Fn<#$input_types> for #$shared_type #$where_clause {
                 #(#$attrs)*
                 #[inline]
                 extern "rust-call" fn call(&self, args: #$input_types) -> Self::Output {
@@ -119,7 +119,7 @@ fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
                 let shared_type = format_ident!("Overloader_{}_{}", ident, s);
                 let const_stream: TokenStream = quote!(
                     #[allow(non_upper_case_globals)]
-                    const #const_field: #shared_type<Self> = #shared_type::<Self>(std::marker::PhantomData);
+                    const #const_field: #shared_type<Self> = #shared_type::<Self>(core::marker::PhantomData);
                 ).into();
                 let t = syn::parse_macro_input!(const_stream as syn::TraitItemConst);
                 items.push(syn::TraitItem::Const(t));
@@ -129,7 +129,7 @@ fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
                     #[allow(non_camel_case_types)]
                     #[allow(dead_code)]
                     #[derive(Copy, Clone)]
-                    #vis struct #shared_type<S>(std::marker::PhantomData<S>);
+                    #vis struct #shared_type<S>(core::marker::PhantomData<S>);
                     unsafe impl<S> Send for #shared_type<S> {}
                     unsafe impl<S> Sync for #shared_type<S> {}
                 );
@@ -336,7 +336,7 @@ fn impl_method_to_non_trait(
     let unsafety = &ast.sig.unsafety;
     let asyncness = &ast.sig.asyncness;
     let ident = ast.sig.ident.clone().into_token_stream().to_string();
-    let tp_str = tp.into_token_stream().to_string();
+    let tp_str = tp.into_token_stream().to_string().replace(" ", "_");
     let shared_type = format_ident!("Overloader_{}_{}", tp_str, ident);
     let inputs = &ast.sig.inputs;
     let mut output = get_output(&ast.sig.output, tp);
@@ -374,7 +374,7 @@ fn impl_method_to_non_trait(
         )
         .emit();
         if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
             block = quote!(
                 let #param_assign = args;
                 unsafe {
@@ -393,7 +393,7 @@ fn impl_method_to_non_trait(
         }
     } else {
         if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
             block = quote!(
                 let #param_assign = args;
                 Box::pin(async move {
@@ -479,7 +479,7 @@ fn trait_method_to_fn_trait(
             )
             .emit();
             if asyncness.is_some() {
-                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
                 block = quote!(
                     let #param_assign = args;
                     unsafe {
@@ -498,7 +498,7 @@ fn trait_method_to_fn_trait(
             }
         } else {
             if asyncness.is_some() {
-                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
                 block = quote!(
                     let #param_assign = args;
                     Box::pin(async move {
@@ -596,7 +596,7 @@ fn impl_method_to_fn_trait(
         )
         .emit();
         if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
             block = quote!(
                 let #param_assign = args;
                 unsafe {
@@ -615,7 +615,7 @@ fn impl_method_to_fn_trait(
         }
     } else {
         if asyncness.is_some() {
-            output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
             block = quote!(
                 let #param_assign = args;
                 Box::pin(async move {
@@ -719,7 +719,7 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
                 if dup.get(&method_id).is_some() {
                     if undefined.insert(method_id.clone()) {
                         let const_field = &item_method.sig.ident;
-                        let tp_str = self_type.into_token_stream().to_string();
+                        let tp_str = self_type.into_token_stream().to_string().replace(" ", "_");
                         let shared_type = format_ident!("Overloader_{}_{}", tp_str, method_id);
                         let const_stream: TokenStream = quote!(
                             #[allow(non_upper_case_globals)]
@@ -832,7 +832,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
             )
             .emit();
             if asyncness.is_some() {
-                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
                 block = quote!(
                     let #param_assign = args;
                     #(#defaults)*
@@ -853,7 +853,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
             }
         } else {
             if asyncness.is_some() {
-                output = quote!(std::pin::Pin<Box<dyn std::future::Future<Output = #output>>>);
+                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
                 block = quote!(
                     let #param_assign = args;
                     #(#defaults)*

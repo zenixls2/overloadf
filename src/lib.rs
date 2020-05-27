@@ -158,6 +158,29 @@
 //! assert_eq!(haha.b, 2_i32);
 //! ```
 //!
+//! dynamic trait object implementation:
+//! ```rust
+//! #![feature(fn_traits, unboxed_closures)]
+//! use overloadf::*;
+//! trait Xdd: 'static {}
+//!
+//! #[overload]
+//! impl dyn Xdd {
+//!     fn abc(&self, c: i32) -> i32 {
+//!         c
+//!     }
+//!     fn abc(&self, c: u32) -> u32 {
+//!         c
+//!     }
+//! }
+//!
+//! impl<T: 'static + ?Sized> Xdd for T {}
+//! let obj = (&3_i32 as &(dyn Xdd));
+//! // here we lost the syntax sugar of calling obj.abc(c) directly
+//! assert_eq!(Xdd::abc(obj, 3_i32), 3_i32);
+//! assert_eq!(Xdd::abc(obj, 3_u32), 3_u32);
+//! ```
+//!
 //! trait with generics:
 //! ```rust
 //! #![feature(fn_traits, unboxed_closures)]

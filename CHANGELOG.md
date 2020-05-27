@@ -1,3 +1,9 @@
+0.1.7
+=====
+
+replace `std` with `core` in generated code
+fix dyn Trait implementation
+
 0.1.6
 =====
 

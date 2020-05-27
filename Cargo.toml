@@ -1,6 +1,6 @@
 [package]
 name = "overloadf"
-version = "0.1.6"
+version = "0.1.7"
 authors = ["zenix <zenixls2@gmail.com>"]
 edition = "2018"
 readme = "README.md"
@@ -15,7 +15,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-overloadf_derive = { path = "overloadf_derive", version = "0.1.6" }
+overloadf_derive = { path = "overloadf_derive", version = "0.1.7" }
 
 [badges]
 travis-ci = { repository = "zenixls2/overloadf" }
