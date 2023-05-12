@@ -28,7 +28,7 @@ macro_rules! quotation_expand {
             quote!(())
         } else {
             quote!((#(#$x),*,))
-        };
+        }
     }
 }
 
@@ -169,7 +169,7 @@ fn replace_self<F: ToTokens, T: ToTokens, O: syn::parse::Parse>(
     syn::parse_str(&input_str)
 }
 
-fn get_output(ast: &syn::ReturnType, tp: &syn::Type) -> syn::export::TokenStream2 {
+fn get_output(ast: &syn::ReturnType, tp: &syn::Type) -> proc_macro2::TokenStream {
     let new_output: syn::ReturnType = replace_self(&ast, tp).unwrap();
     match new_output {
         syn::ReturnType::Default => quote!(()),
@@ -329,7 +329,7 @@ fn sig_normalize(sig: &syn::Signature) -> String {
 fn impl_method_to_non_trait(
     tp: &syn::Type,
     ast: &syn::ImplItemMethod,
-) -> syn::export::TokenStream2 {
+) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     let (impl_generics, _ty_generics, where_clause) = &ast.sig.generics.split_for_impl();
     let attrs = &ast.attrs;
@@ -424,7 +424,7 @@ fn trait_method_to_fn_trait(
     tt: &syn::Ident,
     tp: &syn::Type,
     ast: &syn::TraitItemMethod,
-) -> syn::export::TokenStream2 {
+) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     if let Some(block) = &ast.default {
         let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
@@ -538,7 +538,7 @@ fn impl_method_to_fn_trait(
     tt: &syn::Ident,
     tp: &syn::Type,
     ast: &syn::ImplItemMethod,
-) -> syn::export::TokenStream2 {
+) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
     let attrs = &ast.attrs;
