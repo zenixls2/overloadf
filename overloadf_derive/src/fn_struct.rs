@@ -16,20 +16,14 @@ where
 
     fn outer(self) -> Self::Ret {
         fn is_outer(attr: &&syn::Attribute) -> bool {
-            match attr.style {
-                syn::AttrStyle::Outer => true,
-                _ => false,
-            }
+            matches!(attr.style, syn::AttrStyle::Outer)
         }
         self.into_iter().filter(is_outer)
     }
 
     fn inner(self) -> Self::Ret {
         fn is_inner(attr: &&syn::Attribute) -> bool {
-            match attr.style {
-                syn::AttrStyle::Inner(_) => true,
-                _ => false,
-            }
+            matches!(attr.style, syn::AttrStyle::Inner(_))
         }
         self.into_iter().filter(is_inner)
     }
@@ -110,7 +104,15 @@ fn fn_arg_typed(input: ParseStream) -> Result<PatType> {
         return Ok(pt);
     }
 
-    let pat: Box<syn::Pat> = input.parse()?;
+    let id: syn::Ident = input.parse()?;
+    let pat: syn::Pat = syn::PatIdent {
+        attrs: vec![],
+        by_ref: None,
+        mutability: None,
+        ident: id,
+        subpat: None,
+    }
+    .into();
     let colon_token: syn::token::Colon = input.parse()?;
     let ty: syn::Type = match input.parse::<Option<Token![...]>>()? {
         Some(dot3) => syn::Type::Verbatim(variadic_to_tokens(&dot3)),
@@ -124,7 +126,7 @@ fn fn_arg_typed(input: ParseStream) -> Result<PatType> {
     };
     Ok(PatType {
         attrs: Vec::new(),
-        pat,
+        pat: pat.into(),
         colon_token,
         ty: Box::new(ty),
         assign,
@@ -165,12 +167,14 @@ fn pop_variadic(args: &mut Punctuated<FnArg, Token![,]>) -> Option<syn::Variadic
 
     let mut variadic = syn::Variadic {
         attrs: Vec::new(),
+        pat: None,
         dots: syn::parse2(ty.clone()).ok()?,
+        comma: None,
     };
 
     if let syn::Pat::Verbatim(pat) = last.pat.as_ref() {
         if pat.to_string() == "..." && !trailing_punct {
-            variadic.attrs = std::mem::replace(&mut last.attrs, Vec::new());
+            variadic.attrs = std::mem::take(&mut last.attrs);
             args.pop();
         }
     }
@@ -305,7 +309,7 @@ impl ToTokens for PatType {
 
 impl ToTokens for FnArg {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match &*self {
+        match self {
             FnArg::Receiver(x) => x.to_tokens(tokens),
             FnArg::Typed(x) => x.to_tokens(tokens),
         }

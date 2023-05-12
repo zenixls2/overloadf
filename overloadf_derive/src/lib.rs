@@ -1,26 +1,32 @@
-#![feature(proc_macro_diagnostic, proc_macro_span)]
+#![feature(proc_macro_diagnostic, proc_macro_span, lazy_cell)]
 extern crate proc_macro;
 #[macro_use]
 extern crate syn;
 #[macro_use]
 extern crate quote;
 use core::cmp::Ordering;
-use lazy_static::lazy_static;
 use proc_macro::TokenStream;
 use quote::ToTokens;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use std::sync::Mutex;
+use syn::parse;
+use syn::parse::Parser;
 use syn::spanned::Spanned;
 mod fn_struct;
 mod input_iter;
 
-lazy_static! {
-    static ref NAMINGS: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-    static ref TRAIT_IDENTS: Mutex<HashMap<String, Vec<String>>> = Mutex::new(HashMap::new());
-    static ref DEFAULT_DEFINITION: Mutex<HashMap<
-        String, HashMap<String, String> // TraitItemMethod
-        >> = Mutex::new(HashMap::new());
-}
+static NAMINGS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+static TRAIT_IDENTS: LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static DEFAULT_DEFINITION: LazyLock<
+    Mutex<
+        HashMap<
+            String,
+            HashMap<String, String>, // TraitItemFn
+        >,
+    >,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 macro_rules! quotation_expand {
     ($x: tt) => {
@@ -94,12 +100,12 @@ macro_rules! fn_impl {
 
 fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
     let ident = item.ident.to_string();
-    let mut map: HashMap<String, Vec<syn::TraitItemMethod>> = HashMap::new();
-    let mut fn_map: HashMap<String, syn::TraitItemMethod> = HashMap::new();
+    let mut map: HashMap<String, Vec<syn::TraitItemFn>> = HashMap::new();
+    let mut fn_map: HashMap<String, syn::TraitItemFn> = HashMap::new();
     let mut items = vec![];
     for i in &item.items {
         let t = i.clone();
-        if let syn::TraitItem::Method(item_method) = t {
+        if let syn::TraitItem::Fn(item_method) = t {
             let method_sig = sig_normalize(&item_method.sig);
             map.entry(item_method.sig.ident.to_string())
                 .and_modify(|e| e.push(item_method.clone()))
@@ -136,7 +142,7 @@ fn process_trait(mut item: syn::ItemTrait) -> TokenStream {
                 prepares.push(prepare);
             }
             Ordering::Equal => {
-                items.push(syn::TraitItem::Method(i[0].clone()));
+                items.push(syn::TraitItem::Fn(i[0].clone()));
             }
             Ordering::Less => {}
         }
@@ -170,7 +176,7 @@ fn replace_self<F: ToTokens, T: ToTokens, O: syn::parse::Parse>(
 }
 
 fn get_output(ast: &syn::ReturnType, tp: &syn::Type) -> proc_macro2::TokenStream {
-    let new_output: syn::ReturnType = replace_self(&ast, tp).unwrap();
+    let new_output: syn::ReturnType = replace_self(ast, tp).unwrap();
     match new_output {
         syn::ReturnType::Default => quote!(()),
         syn::ReturnType::Type(_, t) => quote!(#t),
@@ -246,17 +252,21 @@ fn generics_normalize(ast: &syn::Generics) -> syn::Generics {
                 syn::WherePredicate::Type(t) => {
                     if let Some(l) = &mut t.lifetimes {
                         for ll in l.lifetimes.iter_mut() {
-                            if let Some(v) = matching_table.get(&ll.lifetime.ident.to_string()) {
-                                ll.lifetime.ident = idgen.id(*v);
-                                for lll in ll.bounds.iter_mut() {
-                                    if let Some(v) = matching_table.get(&lll.ident.to_string()) {
-                                        lll.ident = idgen.id(*v);
-                                    } else {
-                                        take = false;
+                            if let syn::GenericParam::Lifetime(lp) = ll {
+                                if let Some(v) = matching_table.get(&lp.lifetime.ident.to_string())
+                                {
+                                    lp.lifetime.ident = idgen.id(*v);
+                                    for lll in lp.bounds.iter_mut() {
+                                        if let Some(v) = matching_table.get(&lll.ident.to_string())
+                                        {
+                                            lll.ident = idgen.id(*v);
+                                        } else {
+                                            take = false;
+                                        }
                                     }
+                                } else {
+                                    take = false;
                                 }
-                            } else {
-                                take = false;
                             }
                         }
                     }
@@ -295,7 +305,7 @@ fn generics_normalize(ast: &syn::Generics) -> syn::Generics {
                         take = false;
                     }
                 }
-                syn::WherePredicate::Eq(_) => {} // unsupported
+                &mut _ => todo!(),
             }
             if take {
                 p.push(predicate.clone());
@@ -326,17 +336,14 @@ fn sig_normalize(sig: &syn::Signature) -> String {
     sig.into_token_stream().to_string()
 }
 
-fn impl_method_to_non_trait(
-    tp: &syn::Type,
-    ast: &syn::ImplItemMethod,
-) -> proc_macro2::TokenStream {
+fn impl_method_to_non_trait(tp: &syn::Type, ast: &syn::ImplItemFn) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     let (impl_generics, _ty_generics, where_clause) = &ast.sig.generics.split_for_impl();
     let attrs = &ast.attrs;
     let unsafety = &ast.sig.unsafety;
     let asyncness = &ast.sig.asyncness;
     let ident = ast.sig.ident.clone().into_token_stream().to_string();
-    let tp_str = tp.into_token_stream().to_string().replace(" ", "_");
+    let tp_str = tp.into_token_stream().to_string().replace(' ', "_");
     let shared_type = format_ident!("Overloader_{}_{}", tp_str, ident);
     let inputs = &ast.sig.inputs;
     let mut output = get_output(&ast.sig.output, tp);
@@ -357,8 +364,16 @@ fn impl_method_to_non_trait(
                     (None, Some(_)) => quote!(mut #tp),
                     (None, None) => quote!(#tp),
                 };
+                let id: syn::Ident = syn::parse_str("__self").unwrap();
+                let pid = syn::PatIdent {
+                    attrs: vec![],
+                    by_ref: None,
+                    mutability: None,
+                    ident: id,
+                    subpat: None,
+                };
                 input_types.push(syn::parse_str(&ty.to_string()).unwrap());
-                param_assign.push(syn::parse_str("__self").unwrap());
+                param_assign.push(pid.into());
             }
         }
     }
@@ -391,21 +406,19 @@ fn impl_method_to_non_trait(
                 }
             );
         }
-    } else {
-        if asyncness.is_some() {
-            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
-            block = quote!(
-                let #param_assign = args;
-                Box::pin(async move {
-                    #(#body)*
-                })
-            );
-        } else {
-            block = quote!(
-                let #param_assign = args;
+    } else if asyncness.is_some() {
+        output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
+        block = quote!(
+            let #param_assign = args;
+            Box::pin(async move {
                 #(#body)*
-            );
-        }
+            })
+        );
+    } else {
+        block = quote!(
+            let #param_assign = args;
+            #(#body)*
+        );
     }
     let result = fn_impl!(
         impl_generics,
@@ -423,7 +436,7 @@ fn trait_method_to_fn_trait(
     trait_path: &syn::Path,
     tt: &syn::Ident,
     tp: &syn::Type,
-    ast: &syn::TraitItemMethod,
+    ast: &syn::TraitItemFn,
 ) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     if let Some(block) = &ast.default {
@@ -462,8 +475,16 @@ fn trait_method_to_fn_trait(
                         (None, Some(_)) => quote!(mut #tp),
                         (None, None) => quote!(#tp),
                     };
+                    let id: syn::Ident = syn::parse_str("__self").unwrap();
+                    let pid = syn::PatIdent {
+                        attrs: vec![],
+                        by_ref: None,
+                        mutability: None,
+                        ident: id,
+                        subpat: None,
+                    };
                     input_types.push(syn::parse_str(&ty.to_string()).unwrap());
-                    param_assign.push(syn::parse_str("__self").unwrap());
+                    param_assign.push(pid.into());
                 }
             }
         }
@@ -496,21 +517,19 @@ fn trait_method_to_fn_trait(
                     }
                 );
             }
-        } else {
-            if asyncness.is_some() {
-                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
-                block = quote!(
-                    let #param_assign = args;
-                    Box::pin(async move {
-                        #(#body)*
-                    })
-                );
-            } else {
-                block = quote!(
-                    let #param_assign = args;
+        } else if asyncness.is_some() {
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
+            block = quote!(
+                let #param_assign = args;
+                Box::pin(async move {
                     #(#body)*
-                );
-            }
+                })
+            );
+        } else {
+            block = quote!(
+                let #param_assign = args;
+                #(#body)*
+            );
         }
         let result = fn_impl!(
             impl_generics,
@@ -537,7 +556,7 @@ fn impl_method_to_fn_trait(
     trait_path: &syn::Path,
     tt: &syn::Ident,
     tp: &syn::Type,
-    ast: &syn::ImplItemMethod,
+    ast: &syn::ImplItemFn,
 ) -> proc_macro2::TokenStream {
     let span = ast.span().unstable();
     let (impl_generics, _ty_generics, where_clause) = ast.sig.generics.split_for_impl();
@@ -577,10 +596,16 @@ fn impl_method_to_fn_trait(
                     (None, Some(_)) => quote!(mut #tp),
                     (None, None) => quote!(#tp),
                 };
-                let ty: syn::Type = syn::parse_str(&ty.to_string()).unwrap();
-                input_types.push(ty);
-                let pat: syn::Pat = syn::parse_str("__self").unwrap();
-                param_assign.push(pat);
+                let id: syn::Ident = syn::parse_str("__self").unwrap();
+                let pid = syn::PatIdent {
+                    attrs: vec![],
+                    by_ref: None,
+                    mutability: None,
+                    ident: id,
+                    subpat: None,
+                };
+                input_types.push(syn::parse_str(&ty.to_string()).unwrap());
+                param_assign.push(pid.into());
             }
         }
     }
@@ -613,21 +638,19 @@ fn impl_method_to_fn_trait(
                 }
             );
         }
-    } else {
-        if asyncness.is_some() {
-            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
-            block = quote!(
-                let #param_assign = args;
-                Box::pin(async move {
-                    #(#body)*
-                })
-            );
-        } else {
-            block = quote!(
-                let #param_assign = args;
+    } else if asyncness.is_some() {
+        output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
+        block = quote!(
+            let #param_assign = args;
+            Box::pin(async move {
                 #(#body)*
-            );
-        }
+            })
+        );
+    } else {
+        block = quote!(
+            let #param_assign = args;
+            #(#body)*
+        );
     }
     fn_impl!(
         impl_generics,
@@ -653,7 +676,7 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
             if let Some(shared_fields) = TRAIT_IDENTS.lock().unwrap().get(&ident.to_string()) {
                 let mut set = HashSet::new();
                 for i in &item.items {
-                    if let syn::ImplItem::Method(item_method) = i {
+                    if let syn::ImplItem::Fn(item_method) = i {
                         let method_id = item_method.sig.ident.to_string();
                         let method_sig = sig_normalize(&item_method.sig);
                         set.insert(method_sig);
@@ -661,11 +684,11 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
                             generated.push(impl_method_to_fn_trait(
                                 &path,
                                 ident,
-                                &self_type,
+                                self_type,
                                 item_method,
                             ));
                         } else {
-                            items.push(syn::ImplItem::Method(item_method.clone()));
+                            items.push(syn::ImplItem::Fn(item_method.clone()));
                         }
                     } else {
                         items.push(i.clone());
@@ -676,14 +699,14 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
                     for (k, v) in map.iter() {
                         // check if is not implemented
                         if !set.contains(k) {
-                            let item_method: syn::TraitItemMethod = syn::parse_str(v).unwrap();
+                            let item_method: syn::TraitItemFn = syn::parse_str(v).unwrap();
                             let method_id = item_method.sig.ident.to_string();
                             // check if method needs overloading
                             if shared_fields.iter().any(|e| e == &method_id) {
                                 generated.push(trait_method_to_fn_trait(
                                     &path,
                                     ident,
-                                    &self_type,
+                                    self_type,
                                     &item_method,
                                 ));
                             }
@@ -705,7 +728,7 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
         let mut dup = HashSet::new();
         let mut undefined = HashSet::new();
         for i in &item.items {
-            if let syn::ImplItem::Method(item_method) = i {
+            if let syn::ImplItem::Fn(item_method) = i {
                 let method_id = item_method.sig.ident.to_string();
                 if !fn_names.insert(method_id.clone()) {
                     dup.insert(method_id);
@@ -713,13 +736,13 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
             }
         }
         for i in &item.items {
-            if let syn::ImplItem::Method(item_method) = i {
+            if let syn::ImplItem::Fn(item_method) = i {
                 let vis = &item_method.vis;
                 let method_id = item_method.sig.ident.to_string();
                 if dup.get(&method_id).is_some() {
                     if undefined.insert(method_id.clone()) {
                         let const_field = &item_method.sig.ident;
-                        let tp_str = self_type.into_token_stream().to_string().replace(" ", "_");
+                        let tp_str = self_type.into_token_stream().to_string().replace(' ', "_");
                         let shared_type = format_ident!("Overloader_{}_{}", tp_str, method_id);
                         let const_stream: TokenStream = quote!(
                             #[allow(non_upper_case_globals)]
@@ -736,9 +759,9 @@ fn process_impl(mut item: syn::ItemImpl) -> TokenStream {
                             unsafe impl Sync for #shared_type {}
                         ));
                     }
-                    generated.push(impl_method_to_non_trait(&self_type, item_method));
+                    generated.push(impl_method_to_non_trait(self_type, item_method));
                 } else {
-                    items.push(syn::ImplItem::Method(item_method.clone()));
+                    items.push(syn::ImplItem::Fn(item_method.clone()));
                 }
             } else {
                 items.push(i.clone());
@@ -783,7 +806,7 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
         if let syn::FnArg::Typed(tp) = tp {
             let mut assign: Option<fn_struct::Assign> = None;
             for attr in &tp.attrs {
-                if attr.path.is_ident("default") {
+                if attr.path().is_ident("default") {
                     assign = Some(attr.parse_args().unwrap());
                     break;
                 }
@@ -851,23 +874,21 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
                     }
                 );
             }
-        } else {
-            if asyncness.is_some() {
-                output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
-                block = quote!(
-                    let #param_assign = args;
-                    #(#defaults)*
-                    Box::pin(async move {
-                        #(#body)*
-                    })
-                );
-            } else {
-                block = quote!(
-                    let #param_assign = args;
-                    #(#defaults)*
+        } else if asyncness.is_some() {
+            output = quote!(core::pin::Pin<Box<dyn core::future::Future<Output = #output>>>);
+            block = quote!(
+                let #param_assign = args;
+                #(#defaults)*
+                Box::pin(async move {
                     #(#body)*
-                );
-            }
+                })
+            );
+        } else {
+            block = quote!(
+                let #param_assign = args;
+                #(#defaults)*
+                #(#body)*
+            );
         }
         let result = fn_impl!(
             impl_generics,
@@ -889,10 +910,12 @@ fn process_fn(ast: syn::ItemFn) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn overload(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = syn::parse_macro_input!(attr as syn::AttributeArgs);
+    //let args = syn::parse_macro_input!(attr as syn::Attribute);
     // not used, currently specialization on Trait parameter is not well defined
-    let _default = if !args.is_empty() {
-        if args[0].clone().into_token_stream().to_string() == "default" {
+    let _default = if let Ok(parsed_args) = syn::Attribute::parse_outer.parse(attr) {
+        if !parsed_args.is_empty()
+            && parsed_args[0].clone().into_token_stream().to_string() == "default"
+        {
             quote!(default)
         } else {
             quote!()
@@ -900,11 +923,11 @@ pub fn overload(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote!()
     };
-    if let Ok(ast) = syn::parse_macro_input::parse::<syn::ItemTrait>(item.clone()) {
+    if let Ok(ast) = parse::<syn::ItemTrait>(item.clone()) {
         return process_trait(ast);
-    } else if let Ok(ast) = syn::parse_macro_input::parse::<syn::ItemImpl>(item.clone()) {
+    } else if let Ok(ast) = parse::<syn::ItemImpl>(item.clone()) {
         return process_impl(ast);
-    } else if let Ok(ast) = syn::parse_macro_input::parse::<syn::ItemFn>(item.clone()) {
+    } else if let Ok(ast) = parse::<syn::ItemFn>(item.clone()) {
         return process_fn(ast);
     } else {
         for tree in item.into_iter() {
