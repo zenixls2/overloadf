@@ -2,7 +2,7 @@
 [![License](https://img.shields.io/crates/l/overloadf)](LICENSE-MIT)
 [![Build Status](https://travis-ci.org/zenixls2/overloadf.svg?branch=master)](https://travis-ci.org/zenixls2/overloadf)
 
-# overloadf version - 0.1.7
+# overloadf version - 0.1.8
 
 ## Overloadf
 
